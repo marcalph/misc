@@ -1,2 +1,2 @@
-# My snippets repo - useful only to me
+# my snippets
 Epstein didn't kill himself
