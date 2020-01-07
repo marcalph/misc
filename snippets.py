@@ -47,16 +47,3 @@ arr = [1, 2, 3, 4, 5]
 arr = list(filter(lambda x : x%2 == 0, arr))
 print (arr) # [2, 4]
 print("**********")
-
-
-""" decorator utils
-"""
-from decorators import logthis
-
-
-@logthis
-def test(number):
-    print(number%2 == 0)
-    return(number%2 == 0)
-
-test(7)
