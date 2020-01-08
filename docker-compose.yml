@@ -1,0 +1,8 @@
+version: '3'
+
+services:
+  misc:
+    image: misc
+    build: .
+    volumes:
+      - .:/app
