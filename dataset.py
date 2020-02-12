@@ -5,15 +5,15 @@
 from datetime import datetime, timedelta
 from google_images_download import google_images_download
 
-bulks = [100, 300]
+bulks = [100]
 for b in bulks:
     response = google_images_download.googleimagesdownload()
-    arguments = {"keywords": "chien",
+    arguments = {"keywords": "corrida magne",
                 "limit": b,
-                "chromedriver": "/opt/chromedriver-79.0.3945.36/chromedriver",
-    #             "time_range": '{"time_min":"02/01/2018", "time_max":"03/01/2018"}', # MM/DD/YYYY
+                "chromedriver": "/usr/local/bin/chromedriver",
+                "time_range": '{"time_min":"02/01/2018", "time_max":"03/01/2018"}', # MM/DD/YYYY
                 "print_urls": True,
-                "output_directory": "./downloads/buld"+str(b),
+                # "output_directory": "./downloads/test"+str(b),
                 "no_directory": True}
     paths = response.download(arguments)
 
