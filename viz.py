@@ -22,9 +22,9 @@ def batch_plot(img_batch, label_batch=None, side=5):
     viz function to inspect image data
     displays `side`**2 images of a batch by default
     """
-    fig = plt.figure(figsize=(2*square, 2*square))
+    fig = plt.figure(figsize=(2*side, 2*side))
     for i, img in enumerate(img_batch):
-        plt.subplot(square, square, i+1)
+        plt.subplot(side, side, i+1)
         plt.yticks([])
         plt.xticks([])
         plt.grid(False)
