@@ -23,13 +23,13 @@ def batch_plot(img_batch, label_batch=None, side=5):
     displays `side`**2 images of a batch by default
     """
     fig = plt.figure(figsize=(2*side, 2*side))
-    for i, img in enumerate(img_batch):
+    for i in range(side**2):
         plt.subplot(side, side, i+1)
         plt.yticks([])
         plt.xticks([])
         plt.grid(False)
-        plt.imshow(img, cmap=plt.cm.binary)
-        if train_labels:
+        plt.imshow(img_batch[i], cmap=plt.cm.binary)
+        if label_batch is not None:
             plt.xlabel(label_batch[i])
     plt.show()
     return None
