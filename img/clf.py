@@ -6,6 +6,11 @@ from fastai.vision import *
 from PIL import Image
 
 
+
+
+# todo use lr scheduler from torch
+# correct label mapping
+
 bs = 64
 
 path = untar_data(URLs.PETS, dest="./data")
@@ -35,12 +40,13 @@ def faw_step1():
     print("=== training::stage-1::clr")
     learn.fit_one_cycle(4)
     learn.save('stage-1')
+    return data, learn
+
+
+def faw_interp(data, learn):
     print("=== evaluation")
     interp.plot_confusion_matrix(figsize=(12,12), dpi=60)
     interp.most_confused(min_val=2)
-    return data, learn
-
-def faw_interp(data, learn):
     print("=== results interpretation")
     interp = ClassificationInterpretation.from_learner(learn)
     losses,idxs = interp.top_losses()
