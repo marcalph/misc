@@ -1,27 +1,49 @@
-import itertools
-from pathlib import Path
+import math
+import pathlib
+import time
+# int(len(dataset) * num_epochs /bs)
+from itertools import cycle
+
+import cv2
 import matplotlib.pyplot as plt
-from fastai.metrics import error_rate
+import numpy as np
+import pandas as pd
+import torch
+from albumentations import (CLAHE, Blur, Compose, Flip, GaussNoise,RandomSizedCrop,
+                            GridDistortion, HorizontalFlip, HueSaturationValue,
+                            IAAAdditiveGaussianNoise, IAAEmboss,
+                            IAAPerspective, IAAPiecewiseAffine, IAASharpen,
+                            MedianBlur, MotionBlur, OneOf, OpticalDistortion,
+                            RandomBrightnessContrast, RandomContrast,RandomBrightness,
+                            RandomRotate90, Resize, Rotate, ShiftScaleRotate,RandomGamma,NoOp,
+                            Transpose)
+
+import albumentations as A
+from albumentations.pytorch import ToTensor
+from torch import nn, optim
+from torch.utils.data import DataLoader, Dataset
+from torchvision import models, transforms
+from tqdm.notebook import tqdm
 from fastai.vision import *
-from PIL import Image
+from sklearn.model_selection import train_test_split
 
 
 
 
 # todo use lr scheduler from torch
-# correct label mapping
+# todo correct label mapping
 
 bs = 64
 
 path = untar_data(URLs.PETS, dest="./data")
-
 path_anno = path/'annotations'
 path_img = path/'images'
 fnames = get_image_files(path_img)
 print(fnames[:5])
-
-
-
+global device
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# device='cpu'
+print(device)
 
 
 # ============
@@ -69,33 +91,34 @@ def faw_step2(learn):
 # ============
 
 
-from albumentations import (Rotate,Resize, RandomCrop,
-    HorizontalFlip, IAAPerspective, ShiftScaleRotate, CLAHE, RandomRotate90,
-    Transpose, ShiftScaleRotate, Blur, OpticalDistortion, GridDistortion, HueSaturationValue,
-    IAAAdditiveGaussianNoise, GaussNoise, MotionBlur, MedianBlur, IAAPiecewiseAffine,
-    IAASharpen, IAAEmboss, RandomBrightnessContrast, Flip, OneOf, Compose
-)
-from skimage import io
-import torch
-import pandas as pd
-from torch.utils.data import Dataset, DataLoader
-import numpy as np
+def update_lr(optimizer, lr,mom):
+    for pg in optimizer.param_groups:
+        pg['lr'] = lr
+        b1, b2 = pg["betas"]
+        pg['betas'] = mom, b2
 
-from albumentations.pytorch import ToTensor
-
-import cv2
-from PIL import Image
-import time
-import copy
-from torchvision import models
+def accuracy(output, target, is_test=False):
+    global total
+    global correct
+    batch_size = output.shape[0]
+    total += batch_size
+    _, pred = torch.max(output, 1)
+    if is_test:
+        preds.extend(pred)
+    correct += (pred == target).sum()
+    return 100 * correct / total
 
 
+df = pd.concat([pd.read_table(path_anno/"trainval.txt", names=["filename", "target"], usecols=[0, 1], sep=" "), 
+               pd.read_table(path_anno/"test.txt", names=["filename", "target"], usecols=[0, 1], sep=" ")])
+df["target"] = df.target.apply(lambda x:x-1)
 
+train_df, val_df = train_test_split(df, test_size=1478)
 
 class PetDataset(Dataset):
-    def __init__(self, img_path, table_file, transform=None):
+    def __init__(self, img_path, df, transform=None):
         self.img_path = img_path
-        self.df = pd.read_table(table_file, names=["filename", "target"], usecols=[0, 1], sep=" ")
+        self.df = df
         self.transform = transform
 
     def __len__(self):
@@ -120,209 +143,355 @@ class PetDataset(Dataset):
 
 
 train_transforms = Compose([
-        # RandomResizedCrop(height=224, width=224, scale=(0.5, 1.0), ratio=(0.75, 1.33), p=1),
-        Resize(256, 256), 
-        RandomCrop(224, 224),
-        HorizontalFlip(p=0.5),
-        OpticalDistortion(p=0.75),
-        Rotate(limit=10, interpolation=1, p=0.75),
-        RandomBrightnessContrast(p=0.75),
-        ToTensor()])
+        Resize(256, 256),
+        A.OneOf([
+            A.ShiftScaleRotate(shift_limit=0.05, scale_limit=0.1,
+                               rotate_limit=15,
+                               border_mode=cv2.BORDER_CONSTANT),
+            A.OpticalDistortion(distort_limit=0.11, shift_limit=0.15,
+                                border_mode=cv2.BORDER_CONSTANT),
+            A.NoOp()
+        ], p=1),
+        A.RandomSizedCrop(min_max_height=(196,256),
+                          height=224,
+                          width=224, p=1),
+        A.OneOf([
+            A.RandomBrightnessContrast(brightness_limit=0.5,
+                                       contrast_limit=0.4),
+            A.RandomGamma(gamma_limit=(50, 150)),
+            A.NoOp()
+        ], p=1),
+        A.OneOf([
+            A.RGBShift(r_shift_limit=20, b_shift_limit=15, g_shift_limit=15),
+            A.HueSaturationValue(hue_shift_limit=5,
+                                 sat_shift_limit=5),
+            A.NoOp()
+        ], p=1),
+        A.OneOf([
+            A.CLAHE(),
+            A.NoOp()
+        ], p=1),
+        A.HorizontalFlip(p=0.5),
+        ToTensor()
+    ])
 
 val_transforms = Compose([
         # RandomResizedCrop(height=224, width=224, scale=(0.5, 1.0), ratio=(0.75, 1.33), p=1),
         Resize(256, 256),
         ToTensor()])
 
-train_ds = PetDataset(path_img, path_anno/"trainval.txt", train_transforms)
+train_ds = PetDataset(path_img, train_df, train_transforms)
 train_dataloader = DataLoader(train_ds, batch_size=64,
                         shuffle=True, num_workers=4)
-
-test_ds = PetDataset(path_img, path_anno/"test.txt", val_transforms)
-test_dataloader = DataLoader(test_ds, batch_size=64,
+val_ds = PetDataset(path_img, val_df, train_transforms)
+val_dataloader = DataLoader(val_ds, batch_size=64,
                         shuffle=True, num_workers=4)
 
+dataloaders_dict = {"train": train_dataloader, "val": val_dataloader}
 
 
 
 
-
-def create_model(num_classes):
-    model = models.resnet34(pretrained=True)
-    num_ftrs = model.fc.in_features
-    model.fc = nn.Linear(num_ftrs, num_classes)
-    input_size = 224
-    return model, input_size
-
-
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-model, input_size = create_model(37)
-model.to(device)
-print(device)
-optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
-
-
-dataloaders_dict = {"train": train_dataloader, "val": test_dataloader}
-criterion = nn.CrossEntropyLoss()
-
-
-
-
-def train_model(model, dataloaders, criterion, optimizer, num_epochs=25, is_inception=False):
-    since = time.time()
-
-    val_acc_history = []
-
-    best_model_wts = copy.deepcopy(model.state_dict())
-    best_acc = 0.0
-
-    for epoch in range(num_epochs):
-        print('Epoch {}/{}'.format(epoch, num_epochs - 1))
-        print('-' * 10)
-
-        # Each epoch has a training and validation phase
-        for phase in ['train', 'val']:
-            if phase == 'train':
-                model.train()  # Set model to training mode
-            else:
-                model.eval()   # Set model to evaluate mode
-
-            running_loss = 0.0
-            running_corrects = 0
-
-            # Iterate over data.
-            for inputs, labels in dataloaders[phase]:
-                inputs = inputs.to(device)
-                labels = labels.to(device)
-
-                # zero the parameter gradients
-                optimizer.zero_grad()
-
-                # forward
-                # track history if only in train
-                with torch.set_grad_enabled(phase == 'train'):
-                    outputs = model(inputs)
-                    _, preds = torch.max(outputs, 1)
-                    loss = criterion(outputs, labels)
-
-                    # backward + optimize only if in training phase
-                    if phase == 'train':
-                        loss.backward()
-                        optimizer.step()
-
-                # statistics
-                running_loss += loss.item() * inputs.size(0)
-                running_corrects += torch.sum(preds == labels.data)
-
-            epoch_loss = running_loss / len(dataloaders[phase].dataset)
-            epoch_acc = running_corrects.double() / len(dataloaders[phase].dataset)
-
-            print('{} Loss: {:.4f} Acc: {:.4f}'.format(phase, epoch_loss, epoch_acc))
-
-            # deep copy the model
-            if phase == 'val' and epoch_acc > best_acc:
-                best_acc = epoch_acc
-                best_model_wts = copy.deepcopy(model.state_dict())
-            if phase == 'val':
-                val_acc_history.append(epoch_acc)
-
-        print()
-
-    time_elapsed = time.time() - since
-    print('Training complete in {:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
-    print('Best val Acc: {:4f}'.format(best_acc))
-
-    # load best model weights
-    model.load_state_dict(best_model_wts)
-    return model, val_acc_history
-
-
-
-import torch
-from torch import nn
-
-class CLR():
-    def __init__(self, train_dataloader, base_lr=1e-5, max_lr=100):
-        self.base_lr = base_lr  # lower boundary for lr (initial lr)
-        self.max_lr = max_lr  # upper boundary for lr
-        self.bn = len(train_dataloader) - 1  # number of iterations used for this test run
-        ratio = self.max_lr/self.base_lr  # n
-        self.mult = ratio ** (1/self.bn)  # q = (max_lr/init_lr)^(1/n)
-        self.best_loss = 1e9  # our assumed best loss
-        self.iteration = 0  # current iteration, initialized to 0
+class LRFinder():
+    """ LRFinder class
+        performs lr range test
+    """
+    def __init__(self, base_lr, max_lr, dataloader):
+        self.base_lr = base_lr                                  # lower boundary for lr (initial lr)
+        self.max_lr = max_lr                                    # upper boundary for lr
+        self.dataloader = dataloader
+        self.n = len(dataloader) - 1                            # number of iterations
+        self.q = (self.max_lr/self.base_lr) ** (1/self.n)       # q = (max_lr/init_lr)^(1/n)
+        self.best_loss = math.inf
         self.lrs = []
         self.losses = []
 
-    def calc_lr(self, loss):
-        self.iteration +=1
-        if math.isnan(loss) or loss > 4 * self.best_loss:  # stopping criteria
+    def compute_lr_step(self, loss, iteration):
+        # stopping criteria
+        if math.isnan(loss) or loss > 4 * self.best_loss:
             return -1
-        if loss < self.best_loss and self.iteration > 1:
+        if loss < self.best_loss and iteration > 1:
             self.best_loss = loss
-        mult = self.mult ** self.iteration  # q = q^i
-        lr = self.base_lr * mult  # lr_i = init_lr * q
+        lr = self.base_lr * self.q ** iteration                 # lr_i = init_lr * q^i
         self.lrs.append(lr)
         self.losses.append(loss)
         return lr
 
-    def plot(self, start=10, end=-5): # plot lrs vs losses
+    def search(self, model, optimizer, loss_func, beta=0):
+        running_loss = 0.
+        beta = 0.                                              # smoothing param
+        model.train()                                               # set the model in training mode
+
+        for i, (input, target) in enumerate(tqdm(self.dataloader)):
+            input, target = input.to(device), target.to(device)
+            output = model(input)
+            loss = loss_func(output, target)
+
+            # smoothing loss by exponential moving average
+            running_loss = beta*running_loss + (1 - beta)*loss
+            smoothed_loss = running_loss/(1 - beta**(i+1))
+
+            # change lr
+            lr = self.compute_lr_step(smoothed_loss, i)
+            if lr == -1:
+                break
+            for pg in optimizer.param_groups:
+                pg['lr'] = lr
+
+            # compute gradient and update params
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+    
+
+    def plot_search(self, start=0, end=-1):
         plt.xlabel("Learning Rate")
-        plt.ylabel("Losses")
+        plt.ylabel("Loss")
         plt.plot(self.lrs[start:end], self.losses[start:end])
-        plt.xscale('log') # learning rates are in log scale
+        plt.xscale('log')                                           # learning rates are in log scale
+
+    def plot_lr_sched(self):
+        plt.ylabel("Learning Rate")
+        plt.xlabel("Iter")
+        plt.plot(range(len(self.lrs)), self.lrs)
 
 
+
+def accuracy(output, target, is_test=False):
+    global total
+    global correct
+    batch_size = output.size(0)
+    total += batch_size
+
+    _, pred = torch.max(output.data, 1)
+    if is_test:
+        preds.extend(pred)
+    correct += (pred == target).sum().item()
+    return 100 * correct / total
+
+
+class AvgStats(object):
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.losses =[]
+        self.precs =[]
+        self.its = []
+
+    def append(self, loss, prec, it):
+        self.losses.append(loss)
+        self.precs.append(prec)
+        self.its.append(it)
+
+class AdaptiveConcatPool2d(nn.Module):
+    def __init__(self, sz=None):
+        super().__init__()
+        sz = sz or (1,1)
+        self.ap = nn.AdaptiveAvgPool2d(sz)
+        self.mp = nn.AdaptiveMaxPool2d(sz)
+    def forward(self, x): return torch.cat([self.mp(x), self.ap(x)], 1)
+  
+def create_model(num_classes, train_bn=True):
+    model = models.resnet34(pretrained=True)
+    for param in model.parameters():
+        param.requires_grad = False
+    
+    if train_bn:
+      for mod in model.modules():
+          if isinstance(mod, nn.BatchNorm1d) or isinstance(mod, nn.BatchNorm2d):
+              for prm in mod.parameters():
+                  prm.requires_grad=True
+              
+    num_features = model.fc.in_features
+    model.avgpool = nn.Sequential(
+        # nn.AdaptiveAvgPool2d(1),
+        # nn.AdaptiveMaxPool2d(1)
+        AdaptiveConcatPool2d(1)
+        )
+    fc_layers = nn.Sequential(
+        nn.Flatten(),
+        nn.BatchNorm1d(1024),
+        nn.Dropout(p=0.25),
+        nn.Linear(1024, 512),
+        nn.ReLU(inplace=True),
+        nn.BatchNorm1d(512),
+        nn.Dropout(p=0.5),
+        nn.Linear(512, num_classes))
+    model.fc = fc_layers
+    return model
+
+
+
+
+
+class OneCyclePolicy():
+    def __init__(self, cycle_len, step_per_epoch, max_lr, momentum_vals=(0.95, 0.85), up_phase=0.3, lr_fold=25):
+        self.step_per_epoch = step_per_epoch
+        self.lr_fold = lr_fold
+        self.max_lr = max_lr
+        self.low_mom = momentum_vals[1]
+        self.high_mom = momentum_vals[0]
+        self.up_phase = up_phase
+        self.iteration = 0
+        self.lrs = []
+        self.moms = []
+        self.trn_accs = []
+        self.val_accs = []
+        self.trn_losses = []
+        self.val_losses = []
+        self.cycle_len = cycle_len
+        self.lr_generator = self.lr_gen()
+        self.mom_generator = self.mom_gen()
+
+    def lr_gen(self):
+        up_prcnt = self.up_phase
+        # annihilation_phase = int(self.end_phase*self.step_per_epoch*self.cycle_len)
+        up_phase = int(up_prcnt*self.step_per_epoch*self.cycle_len)
+        down_phase = self.step_per_epoch*self.cycle_len-up_phase  # -annihilation_phase
+        return cycle(np.hstack([np.linspace(self.max_lr/self.lr_fold, self.max_lr, up_phase),  # increase
+                                np.linspace(self.max_lr, self.max_lr/self.lr_fold/1000, down_phase)]))  # decrease
+                                # np.linspace(self.max_lr/self.lr_fold, self.max_lr/self.lr_fold/10000, annihilation_phase)]))
+
+    def mom_gen(self):
+        down_prcnt = self.up_phase
+        # const_phase = int(self.end_phase*self.step_per_epoch*self.cycle_len)
+        down_phase = int(down_prcnt*self.step_per_epoch*self.cycle_len)
+        up_phase = self.step_per_epoch*self.cycle_len-down_phase
+        return cycle(np.hstack([np.linspace(self.high_mom, self.low_mom, down_phase),  # decrease
+                                np.linspace(self.low_mom, self.high_mom, up_phase)]))  # increase
+
+
+    def recompute(self):
+        self.iteration += 1
+        lr = self.compute_lr()
+        mom = self.compute_mom()
+        return (lr, mom)
+
+    def compute_lr(self):
+        lr = next(self.lr_generator)
+        self.lrs.append(lr)
+        return lr
+
+    def compute_mom(self):
+        mom = next(self.mom_generator)
+        self.moms.append(mom)
+        return mom
+
+    def train(self, model, dataloader, loss_func, optimizer, one_cycle=True):
+        model.train()
+        running_loss = 0.
+        running_corrects = 0
+        avg_beta = 0.98
+        for i, (input, target) in enumerate(tqdm(dataloader, leave=False)):
+            input, target = input.to(device), target.to(device)
+            if one_cycle:
+                lr, mom = self.recompute()
+                update_lr(optimizer, lr,mom)
+                # update_mom(learn.opt, mom)
+
+            output = model(input)
+            _, preds = torch.max(output, 1)
+            loss = loss_func(output, target)
+
+            # running_loss = avg_beta * running_loss + (1-avg_beta) * loss
+            # smoothed_loss = running_loss / (1 - avg_beta**(i+1))
+
+            running_loss += loss.item() * input.size(0)
+            running_corrects += torch.sum(preds == target.data)
+
+            # compute gradient and do optimization step
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+        # measure accuracy and record loss
+        self.trn_losses.append(running_loss / len(dataloader.dataset))
+        self.trn_accs.append(running_corrects.item() / len(dataloader.dataset))
+
+    def validate(self, model, dataloader, loss_func, optimizer):
+        model.eval()
+        running_loss = 0.
+        running_corrects = 0
+        avg_beta = 0.98
+        with torch.no_grad():
+        # if train_bn:
+            for i, (input, target) in enumerate(tqdm(dataloader, leave=False)):
+                input, target = input.to(device), target.to(device)
+                output = model(input)
+                _, preds = torch.max(output, 1)
+                loss = loss_func(output, target)
+
+                # running_loss = avg_beta * running_loss + (1-avg_beta) * loss
+                # smoothed_loss = running_loss / (1 - avg_beta**(i+1))
+
+                running_loss += loss.item() * input.size(0)
+                running_corrects += torch.sum(preds == target.data)
+
+            # measure accuracy and record loss
+            self.val_losses.append(running_loss / len(dataloader.dataset))
+            self.val_accs.append(running_corrects.item() / len(dataloader.dataset))
+
+    def fit(self, epochs, model, dataloaders, loss_func, optimizer, one_cycle=True):
+        print(f"{'epoch':5s}{'train_loss':>15s}{'valid_loss':>15s}{'train_acc':>15s}{'valid_acc':>15s}")
+        for epoch in tqdm(range(epochs), leave=False):
+            self.train(model, dataloaders["train"], loss_func, optimizer, one_cycle)
+            self.validate(model, dataloaders["val"], loss_func, optimizer)
+            print(f"{epoch+1:5}{self.trn_losses[-1]:15.5f}{self.val_losses[-1]:15.5f}{self.trn_accs[-1]:15.5f}{self.val_accs[-1]:15.5f}")
+    
+    def plot_lr_sched(self):
+        plt.ylabel("Learning Rate")
+        plt.xlabel("Iter")
+        plt.plot(range(len(self.lrs)), self.lrs)
+
+    def plot_mom_sched(self):
+        plt.ylabel("Learning Rate")
+        plt.xlabel("Iter")
+        plt.plot(range(len(self.moms)), self.moms)
+
+
+
+
+
+
+
+
+
+lrf = LRFinder(1e-5, 10, train_dataloader)
+model = create_model(37)
+model.to(device)
+adam = optim.AdamW(model.parameters())
 loss_func = nn.CrossEntropyLoss()  # loss function
-opt = torch.optim.SGD(model.parameters(), lr=1e-4, momentum=0.95) # optimizer
-clr = CLR(train_dataloader) # CLR instance
+print(lrf)
+print(lrf.__dict__.keys())
+object_methods = [method_name for method_name in dir(optim.Adam)
+              if callable(getattr(optim.Adam, method_name))]
+print(object_methods)
 
-def find_lr(clr):
-    running_loss = 0. 
-    avg_beta = 0.98 # useful in calculating smoothed loss
-    model.train() # set the model in training mode
-    for i, (input, target) in enumerate(train_dataloader):
-        input, target = input.to(device), target.to(device) # move the inputs and labels to gpu if available
-        output = model(var_ip) # predict output
-        loss = loss_func(output, var_tg) # calculate loss 
 
-        # calculate the smoothed loss 
-        running_loss = avg_beta * running_loss + (1-avg_beta) *loss # the running loss
-        smoothed_loss = running_loss / (1 - avg_beta**(i+1)) # smoothening effect of the loss 
-
-        lr = clr.calc_lr(smoothed_loss) # calculate learning rate using CLR
-        if lr == -1 : # the stopping criteria
-            break
-        for pg in opt.param_groups: # update learning rate
-            pg['lr'] = lr
-
-        # compute gradient and do parameter updates
-        opt.zero_grad()
-        loss.backward()
-        opt.step()
-
+dataloaders_dict = {"train": train_dataloader, "val": val_dataloader}
+resnet=create_model(37)
+resnet.to("cuda")
+loss_func = nn.CrossEntropyLoss()
+adam=optim.AdamW(resnet.parameters(), lr=1e-3)
+epochs=4
+total = 0
+correct = 0
+train_loss = 0
+test_loss = 0
+best_acc = 0
+trn_losses = []
+trn_accs = []
+val_losses = []
+val_accs = []
+preds=[]
+n = np.ceil(len(train_dataloader.dataset)/bs)
+n
 
 
 
-
-model_ft, hist = train_model(model, dataloaders_dict, criterion, optimizer, num_epochs=10)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+ocp= OneCyclePolicy(epochs, 92, 2e-3)
+ocp.fit(epochs, resnet, dataloaders_dict, loss_func, adam, True)
 
 
 
