@@ -5,9 +5,8 @@ import torch.optim as optim
 from torchvision import datasets, transforms
 import numpy as np
 import matplotlib.pyplot as plt
-
-
 epsilons = [0, .15]
+
 pretrained_model = "data/MNIST/lenet_mnist_model.pth"
 use_cuda=False
 
@@ -31,12 +30,15 @@ class Net(nn.Module):
         x = self.fc2(x)
         return F.log_softmax(x, dim=1)
 
+
+
+batch_size=5
 # MNIST Test dataset and dataloader declaration
 test_loader = torch.utils.data.DataLoader(
     datasets.MNIST('./data', train=False, download=True, transform=transforms.Compose([
             transforms.ToTensor(),
             ])),
-        batch_size=1, shuffle=True)
+        batch_size=5, shuffle=True)
 
 # Define what device we are using
 print("CUDA Available: ",torch.cuda.is_available())
@@ -49,70 +51,132 @@ model.load_state_dict(torch.load(pretrained_model, map_location='cpu'))
 model.eval()
 
 
+
+
+for cln_data, true_label in test_loader:
+    break
+cln_data, true_label = cln_data.to(device), true_label.to(device)
+
+
+
+
+
+cln_data.size()
+
+adversary = LBFGSAttack(
+    model, loss_fn=nn.CrossEntropyLoss(reduction="sum"), initial_const=0.01,
+    clip_min=0.0, clip_max=1.0, num_classes=10,
+    targeted=False)
+
+from scipy.optimize import fmin_l_bfgs_b
+
+def lbfgs_attack(model, x, target):
+    def _loss_func(adv, x, target):
+        # adv_n_const
+        adv = torch.from_numpy(adv.reshape(x.shape)).float().to(x.device).requires_grad_()
+        # adv = torch.from_numpy(adv.reshape(x.shape)).float().requires_grad_()
+        out = model(adv)
+        loss_1 = torch.sum(F.nll_loss(out, target, reduction='none'))
+        print(loss_1)
+        loss_2 = torch.sum((adv-x)**2)
+        print(loss_2)
+        loss = loss_1 + loss_2/4
+        loss.backward()
+        adv_grad = adv.grad.data.numpy().flatten().astype(float)
+        loss = loss.data.numpy().flatten().astype(float)
+        return loss, adv_grad
+
+    clip_min = 0 * np.ones(x.shape[:]).astype(float)
+    clip_max = 1 * np.ones(x.shape[:]).astype(float)
+    clip_bound = list(zip(clip_min.flatten(), clip_max.flatten()))
+
+    adv, f, _ = fmin_l_bfgs_b(_loss_func,
+                              x.clone().cpu().numpy().flatten().astype(float),
+                              args=(x.clone(), target),
+                              maxiter=100, bounds=clip_bound)
+
+    adv = torch.from_numpy(adv.reshape(x.shape)).float().to(x.device)
+    print(adv.shape)
+    return adv
+
+
+
+
+
+target = torch.ones_like(true_label) * 3
+# adv_untargeted = adversary.perturb(cln_data, true_label)
+adv_homemade = lbfgs_attack(model, cln_data, target)
+
+
+adversary.targeted = True
+adv_targeted = adversary.perturb(cln_data, target)
+
+pred_cln = predict_from_logits(model(cln_data))
+pred_untargeted_adv = predict_from_logits(model(adv_homemade))
+pred_targeted_adv = predict_from_logits(model(adv_targeted))
+
+print("adv_h", adv_homemade.size())
+print("adv", adv_targeted.size())
+print("adv_h")
+
+
+import matplotlib.pyplot as plt
+plt.figure(figsize=(10, 8))
+for ii in range(batch_size):
+    plt.subplot(3, batch_size, ii + 1)
+    _imshow(cln_data[ii])
+    plt.title("clean \n pred: {}".format(pred_cln[ii]))
+    plt.subplot(3, batch_size, ii + 1 + batch_size)
+    _imshow(adv_homemade[ii])
+    plt.title("untargeted \n adv \n pred: {}".format(
+        pred_untargeted_adv[ii]))
+    # plt.subplot(3, batch_size, ii + 1 + batch_size * 2)
+    # _imshow(adv_targeted[ii])
+    # plt.title("targeted to 3 \n adv \n pred: {}".format(
+    #     pred_targeted_adv[ii]))
+
+plt.tight_layout()
+plt.show()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # FGSM attack
 def fgsm_attack(image, epsilon, data_grad):
-    # Collect the element-wise sign of the data gradient
+    # get element-wise sign of the data gradient
     sign_data_grad = data_grad.sign()
-    # Create the perturbed image by adjusting each pixel of the input image
+    # generate perturbed image by adjusting each pixel of the input image
     perturbed_image = image + epsilon*sign_data_grad
-    # Adding clipping to maintain [0,1] range
+    # add clipping to maintain [0,1] range
     perturbed_image = torch.clamp(perturbed_image, 0, 1)
-    # Return the perturbed image
     return perturbed_image
 
 
-def lbfgs_attack(image, target):
-    pass
-
-
-def test(model, device, test_loader, num_samples=5):
-    adv_examples = []
-    for i in range(num_samples):
-        data, target = next(test_loader)
-        data, target = data.to(device), target.to(device)
-        # Set requires_grad attribute of tensor. Important for attacks
-        data.requires_grad = True
-        output = model(data)
-        init_pred = output.max(1, keepdim=True)[1] # get the index of the max log-probability
-        # If the initial prediction is wrong, dont bother attacking, just move on
-        # Calculate the loss
-        loss = F.nll_loss(output, target)
-        # Zero all existing gradients
-        model.zero_grad()
-        # Calculate gradients of model in backward pass
-        loss.backward()
-        # Collect datagrad
-        data_grad = data.grad.data
-        # Call FGSM Attack
-        perturbed_data = fgsm_attack(data, .15, data_grad)
-        # Re-classify the perturbed image
-        output = model(perturbed_data)
-        # Check for success
-        final_pred = output.max(1, keepdim=True)[1] # get the index of the max 
-        adv_ex = perturbed_data.squeeze().detach().cpu().numpy()
-        adv_examples.append((target.item(), init_pred.item(), final_pred.item(), data.squeeze().detach().numpy(), adv_ex))
-    return adv_examples
-
-
-test_loader = iter(test_loader)
-adv_examples = test(model, device, test_loader)
-
-
-cnt = 0
-plt.figure(figsize=(9,9))
-num_samples = len(adv_examples)
-for i in range(num_samples):
-    print(i)
-    target, orig_pred, adv_pred, orig_data, adv_data = adv_examples[i]
-    plt.subplot(num_samples, 2, 2*i+1)
-    plt.xticks([], [])
-    plt.yticks([], [])
-    plt.ylabel("{}".format(adv_examples[i][0]), fontsize=14)
-    plt.imshow(orig_data, cmap="gray")
-    plt.title("{} -> {}".format(target, orig_pred))
-    plt.subplot(num_samples, 2, 2*i+2)
-    plt.xticks([], [])
-    plt.yticks([], [])
-    plt.imshow(adv_data, cmap="gray")
-    plt.title("{} -> {}".format(orig_pred, adv_pred))
-plt.show()
+# cnt = 0
+# plt.figure(figsize=(9,9))
+# num_samples = len(adv_examples)
+# for i in range(num_samples):
+#     print(i)
+#     target, orig_pred, adv_pred, orig_data, adv_data = adv_examples[i]
+#     plt.subplot(num_samples, 2, 2*i+1)
+#     plt.xticks([], [])
+#     plt.yticks([], [])
+#     plt.ylabel("{}".format(adv_examples[i][0]), fontsize=14)
+#     plt.imshow(orig_data, cmap="gray")
+#     plt.title("{} -> {}".format(target, orig_pred), fontsize=8)
+#     plt.subplot(num_samples, 2, 2*i+2)
+#     plt.xticks([], [])
+#     plt.yticks([], [])
+#     plt.imshow(adv_data, cmap="gray")
+#     plt.title("{} -> {}".format(orig_pred, adv_pred), fontsize=8)
+# plt.show()
