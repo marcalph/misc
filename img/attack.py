@@ -52,35 +52,67 @@ model.eval()
 
 
 
-
-for cln_data, true_label in test_loader:
+for x, y in test_loader:
     break
-cln_data, true_label = cln_data.to(device), true_label.to(device)
+x, y = x.to(device), y.to(device)
 
-
-
-
-
-cln_data.size()
-
-adversary = LBFGSAttack(
-    model, loss_fn=nn.CrossEntropyLoss(reduction="sum"), initial_const=0.01,
-    clip_min=0.0, clip_max=1.0, num_classes=10,
-    targeted=False)
-
+x.size()
 from scipy.optimize import fmin_l_bfgs_b
 
-def lbfgs_attack(model, x, target):
-    def _loss_func(adv, x, target):
+def lbfgs_attack(model, x, y, target):
+
+    coeff_lower_bound = x.new_zeros(5)
+    coeff_upper_bound = x.new_ones(5) * 1e10
+    loss_coeffs = x.new_ones(5) * 1e-2
+    final_l2dists = [1e10] * 5
+    final_labels = [-1] * 5
+    final_advs = x.clone()
+
+    def _update_loss_coeffs(
+            labs, batch_size,
+            loss_coeffs, coeff_upper_bound, coeff_lower_bound, output):
+        for ii in range(5):
+            _, cur_label = torch.max(output[ii], 0)
+            if cur_label.item() == int(labs[ii]):
+                coeff_upper_bound[ii] = min(
+                    coeff_upper_bound[ii], loss_coeffs[ii])
+
+                if coeff_upper_bound[ii] < 1e10:
+                    loss_coeffs[ii] = (
+                        coeff_lower_bound[ii] + coeff_upper_bound[ii]) / 2
+            else:
+                coeff_lower_bound[ii] = max(
+                    coeff_lower_bound[ii], loss_coeffs[ii])
+                if coeff_upper_bound[ii] < 1e10:
+                    loss_coeffs[ii] = (
+                        coeff_lower_bound[ii] + coeff_upper_bound[ii]) / 2
+                else:
+                    loss_coeffs[ii] *= 10
+
+    def _update_if_better(
+            adv_img, labs, output, dist, batch_size,
+            final_l2dists, final_labels, final_advs):
+        for ii in range(batch_size):
+            target_label = labs[ii]
+            output_logits = output[ii]
+            _, output_label = torch.max(output_logits, 0)
+            di = dist[ii]
+            if (di < final_l2dists[ii] and
+                    output_label.item() == target_label):
+                final_l2dists[ii] = di
+                final_labels[ii] = output_label
+                final_advs[ii] = adv_img[ii]
+
+    def _loss_func(adv, x, target, loss_coeffs):
         # adv_n_const
+        global loss_1
+        global loss_2
         adv = torch.from_numpy(adv.reshape(x.shape)).float().to(x.device).requires_grad_()
         # adv = torch.from_numpy(adv.reshape(x.shape)).float().requires_grad_()
         out = model(adv)
-        loss_1 = torch.sum(F.nll_loss(out, target, reduction='none'))
-        print(loss_1)
+        loss_1 = torch.sum(loss_coeffs * F.nll_loss(out, target, reduction='none'))
         loss_2 = torch.sum((adv-x)**2)
-        print(loss_2)
-        loss = loss_1 + loss_2/4
+        loss = loss_1 + loss_2
         loss.backward()
         adv_grad = adv.grad.data.numpy().flatten().astype(float)
         loss = loss.data.numpy().flatten().astype(float)
@@ -90,46 +122,53 @@ def lbfgs_attack(model, x, target):
     clip_max = 1 * np.ones(x.shape[:]).astype(float)
     clip_bound = list(zip(clip_min.flatten(), clip_max.flatten()))
 
-    adv, f, _ = fmin_l_bfgs_b(_loss_func,
-                              x.clone().cpu().numpy().flatten().astype(float),
-                              args=(x.clone(), target),
-                              maxiter=100, bounds=clip_bound)
 
-    adv = torch.from_numpy(adv.reshape(x.shape)).float().to(x.device)
-    print(adv.shape)
+    for _ in range(10):
+        adv, f, _ = fmin_l_bfgs_b(_loss_func,
+                                x.clone().cpu().numpy().flatten().astype(float),
+                                args=(x.clone(), target, loss_coeffs),
+                                maxiter=100, bounds=clip_bound)
+
+        print("loss1===",loss_1)
+        print("loss2===",loss_2)
+        adv = torch.from_numpy(adv.reshape(x.shape)).float()
+        d = (x - adv)**2
+        d = d.view(d.shape[0], -1).sum(dim=1)
+        out=model(adv)
+        _update_if_better(adv, target, out, d, 5, final_l2dists, final_labels, final_advs)
+        # print("l2dist", d)
+
+        _update_loss_coeffs(target, 5, loss_coeffs, coeff_upper_bound, coeff_lower_bound, out)
+        print("loss coeffs", loss_coeffs)
+        print(adv.shape)
     return adv
 
 
 
 
-
-target = torch.ones_like(true_label) * 3
-# adv_untargeted = adversary.perturb(cln_data, true_label)
-adv_homemade = lbfgs_attack(model, cln_data, target)
+target = torch.ones_like(y) * 3
+adv_homemade = lbfgs_attack(model, x, y, target)
 
 
-adversary.targeted = True
-adv_targeted = adversary.perturb(cln_data, target)
-
-pred_cln = predict_from_logits(model(cln_data))
-pred_untargeted_adv = predict_from_logits(model(adv_homemade))
-pred_targeted_adv = predict_from_logits(model(adv_targeted))
-
+pred_cln = model(x).detach().numpy().argmax(axis=1)
+print(pred_cln, "pred_cln")
+pred_adv = model(adv_homemade).detach().numpy().argmax(axis=1)
 print("adv_h", adv_homemade.size())
-print("adv", adv_targeted.size())
 print("adv_h")
 
 
 import matplotlib.pyplot as plt
-plt.figure(figsize=(10, 8))
+plt.figure(figsize=(6, 8))
 for ii in range(batch_size):
-    plt.subplot(3, batch_size, ii + 1)
-    _imshow(cln_data[ii])
+    plt.subplot(2, batch_size, ii + 1)
+    plt.imshow(x[ii].squeeze().numpy())
     plt.title("clean \n pred: {}".format(pred_cln[ii]))
-    plt.subplot(3, batch_size, ii + 1 + batch_size)
-    _imshow(adv_homemade[ii])
-    plt.title("untargeted \n adv \n pred: {}".format(
-        pred_untargeted_adv[ii]))
+    plt.subplot(2, batch_size, ii + 1+batch_size)
+    plt.imshow(adv_homemade[ii].squeeze().numpy())
+    plt.title("clean \n pred: {}".format(pred_adv[ii]))
+    # plt.subplot(2, batch_size, ii + 1 + batch_size)
+    # plt.imshow((adv_homemade[ii])
+    # plt.title("targeted \n adv \n pred: {}".format(pred_adv[ii]))
     # plt.subplot(3, batch_size, ii + 1 + batch_size * 2)
     # _imshow(adv_targeted[ii])
     # plt.title("targeted to 3 \n adv \n pred: {}".format(
@@ -138,28 +177,6 @@ for ii in range(batch_size):
 plt.tight_layout()
 plt.show()
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-# FGSM attack
-def fgsm_attack(image, epsilon, data_grad):
-    # get element-wise sign of the data gradient
-    sign_data_grad = data_grad.sign()
-    # generate perturbed image by adjusting each pixel of the input image
-    perturbed_image = image + epsilon*sign_data_grad
-    # add clipping to maintain [0,1] range
-    perturbed_image = torch.clamp(perturbed_image, 0, 1)
-    return perturbed_image
 
 
 # cnt = 0
@@ -180,3 +197,14 @@ def fgsm_attack(image, epsilon, data_grad):
 #     plt.imshow(adv_data, cmap="gray")
 #     plt.title("{} -> {}".format(orig_pred, adv_pred), fontsize=8)
 # plt.show()
+
+
+# FGSM attack
+def fgsm_attack(image, epsilon, data_grad):
+    # get element-wise sign of the data gradient
+    sign_data_grad = data_grad.sign()
+    # generate perturbed image by adjusting each pixel of the input image
+    perturbed_image = image + epsilon*sign_data_grad
+    # add clipping to maintain [0,1] range
+    perturbed_image = torch.clamp(perturbed_image, 0, 1)
+    return perturbed_image
