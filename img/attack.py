@@ -104,11 +104,9 @@ def lbfgs_attack(model, x, y, target):
                 final_advs[ii] = adv_img[ii]
 
     def _loss_func(adv, x, target, loss_coeffs):
-        # adv_n_const
         global loss_1
         global loss_2
         adv = torch.from_numpy(adv.reshape(x.shape)).float().to(x.device).requires_grad_()
-        # adv = torch.from_numpy(adv.reshape(x.shape)).float().requires_grad_()
         out = model(adv)
         loss_1 = torch.sum(loss_coeffs * F.nll_loss(out, target, reduction='none'))
         loss_2 = torch.sum((adv-x)**2)
@@ -144,8 +142,6 @@ def lbfgs_attack(model, x, y, target):
     return adv
 
 
-
-
 target = torch.ones_like(y) * 3
 adv_homemade = lbfgs_attack(model, x, y, target)
 
@@ -179,24 +175,6 @@ plt.show()
 
 
 
-# cnt = 0
-# plt.figure(figsize=(9,9))
-# num_samples = len(adv_examples)
-# for i in range(num_samples):
-#     print(i)
-#     target, orig_pred, adv_pred, orig_data, adv_data = adv_examples[i]
-#     plt.subplot(num_samples, 2, 2*i+1)
-#     plt.xticks([], [])
-#     plt.yticks([], [])
-#     plt.ylabel("{}".format(adv_examples[i][0]), fontsize=14)
-#     plt.imshow(orig_data, cmap="gray")
-#     plt.title("{} -> {}".format(target, orig_pred), fontsize=8)
-#     plt.subplot(num_samples, 2, 2*i+2)
-#     plt.xticks([], [])
-#     plt.yticks([], [])
-#     plt.imshow(adv_data, cmap="gray")
-#     plt.title("{} -> {}".format(orig_pred, adv_pred), fontsize=8)
-# plt.show()
 
 
 # FGSM attack
