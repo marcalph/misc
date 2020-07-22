@@ -22,7 +22,7 @@ torch.manual_seed(manualSeed)
 
 
 # prms
-dataroot = "data/celeba"
+dataroot = "/content/"
 workers = 2
 batch_size = 128
 image_size = 64

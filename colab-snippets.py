@@ -19,3 +19,14 @@ def get_mem_info():
         print('re-execute this cell.')
     else:
         print('You are using a high-RAM runtime!')
+
+
+
+import zipfile
+from google.colab import drive
+
+drive.mount('/content/drive/')
+
+zip_ref = zipfile.ZipFile("/content/drive/My Drive/ML/DataSet.zip", 'r')
+zip_ref.extractall("/tmp")
+zip_ref.close()
