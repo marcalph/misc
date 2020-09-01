@@ -291,7 +291,9 @@ class AdaptiveConcatPool2d(nn.Module):
         self.ap = nn.AdaptiveAvgPool2d(sz)
         self.mp = nn.AdaptiveMaxPool2d(sz)
     def forward(self, x): return torch.cat([self.mp(x), self.ap(x)], 1)
-  
+
+
+
 def create_model(num_classes, train_bn=True):
     model = models.resnet34(pretrained=True)
     for param in model.parameters():

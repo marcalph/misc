@@ -1,3 +1,6 @@
 downloads/
 data/
 donotcommit.py
+temp/
+**/test.py
+**/t_*.py

@@ -28,7 +28,6 @@ torch.manual_seed(seed)
 torch.cuda.manual_seed(seed)
 
 
-
 class EncoderDecoder(nn.Module):
     """
     standard Encoder-Decoder architecture.
@@ -79,7 +78,7 @@ class Encoder(nn.Module):
         The input mini-batch x needs to be sorted by length.
         x should have dimensions [batch, time, dim].
         """
-        packed = pack_padded_sequence(x, lengths, batch_first=True)
+        packed = pack_padded_sequence(x, lengths, batch_first=True, enforce_sorted=False)
         output, final = self.rnn(packed)
         output, _ = pad_packed_sequence(output, batch_first=True)
 
@@ -148,7 +147,6 @@ class Decoder(nn.Module):
         # (the "keys" for the attention mechanism)
         # this is only done for efficiency
         proj_key = self.attention.key_layer(encoder_hidden)
-
         # here we store all intermediate hidden states and pre-output vectors
         decoder_states = []
         pre_output_vectors = []
@@ -188,6 +186,7 @@ class BahdanauAttention(nn.Module):
         key_size = 2 * hidden_size if key_size is None else key_size
         query_size = hidden_size if query_size is None else query_size
 
+        
         self.key_layer = nn.Linear(key_size, hidden_size, bias=False)
         self.query_layer = nn.Linear(query_size, hidden_size, bias=False)
         self.energy_layer = nn.Linear(hidden_size, 1, bias=False)
@@ -272,7 +271,8 @@ class Batch:
                 self.trg_mask = self.trg_mask.cuda()
 
 
-def run_epoch(data_iter, model, loss_compute, print_every=50):
+
+def run_epoch(data_iter, model, crit, opt, print_every=50):
     """Standard Training and Logging Function"""
 
     start = time.time()
@@ -284,7 +284,16 @@ def run_epoch(data_iter, model, loss_compute, print_every=50):
         out, _, pre_output = model.forward(batch.src, batch.trg,
                                            batch.src_mask, batch.trg_mask,
                                            batch.src_lengths, batch.trg_lengths)
-        loss = loss_compute(pre_output, batch.trg_y, batch.nseqs)
+        output = model.generator(pre_output)
+
+        yhat = output.contiguous().view(-1, output.size(-1))
+        y = batch.trg_y.contiguous().view(-1)
+        loss = crit(yhat, y)
+        if opt is not None:   # training/eval
+            loss.backward()
+            opt.step()
+            opt.zero_grad()
+
         total_loss += loss
         total_tokens += batch.ntokens
         print_tokens += batch.ntokens
@@ -299,39 +308,32 @@ def run_epoch(data_iter, model, loss_compute, print_every=50):
     return math.exp(total_loss / float(total_tokens))
 
 
-def data_gen(num_words=11, batch_size=16, num_batches=100, length=10, pad_index=0, sos_index=1):
+def data_gen(num_words=11, batch_size=16, num_batches=100, length=25, pad_index=0, sos_index=1, eos_index=11):
     """Generate random data for a src-tgt copy task."""
     for i in range(num_batches):
-        data = torch.from_numpy(np.random.randint(1, num_words, size=(batch_size, length)))
-        data[:, 0] = sos_index
-        data = data.cuda() if USE_CUDA else data
+        data = []
+        src_lengths = []
+        trg_lengths = []
+        for _ in range(batch_size):
+            l = np.random.randint(2, length)
+            seq = np.random.randint(1, num_words, size=l)
+            seq[0] = sos_index
+            seq[-1] = eos_index
+            data.append(torch.from_numpy(seq))
+            src_lengths.append(l-1)
+            trg_lengths.append(l)
+
+        data = torch.nn.utils.rnn.pad_sequence(data, batch_first=True)
+        # data = torch.from_numpy(np.random.randint(1, num_words, size=(batch_size, length)))
+        # data = data.cuda() if USE_CUDA else data
+        # data[:, 0] = sos_index
+        # print(data)
         src = data[:, 1:]
         trg = data
-        src_lengths = [length-1] * batch_size
-        trg_lengths = [length] * batch_size
+        # src_lengths = [length-1] * batch_size
+        # trg_lengths = [length] * batch_size
         yield Batch((src, src_lengths), (trg, trg_lengths), pad_index=pad_index)
 
-
-class SimpleLossCompute:
-    """A simple loss compute and train function."""
-
-    def __init__(self, generator, criterion, opt=None):
-        self.generator = generator
-        self.criterion = criterion
-        self.opt = opt
-
-    def __call__(self, x, y, norm):
-        x = self.generator(x)
-        loss = self.criterion(x.contiguous().view(-1, x.size(-1)),
-                              y.contiguous().view(-1))
-        loss = loss / norm
-
-        if self.opt is not None:
-            loss.backward()
-            self.opt.step()
-            self.opt.zero_grad()
-
-        return loss.data.item() * norm
 
 
 def greedy_decode(model, src, src_mask, src_lengths, max_len=100, sos_index=1, eos_index=None):
@@ -345,6 +347,7 @@ def greedy_decode(model, src, src_mask, src_lengths, max_len=100, sos_index=1, e
     attention_scores = []
     hidden = None
 
+    print(max_len)
     for i in range(max_len):
         with torch.no_grad():
             out, hidden, pre_output = model.decode(encoder_hidden,
@@ -383,7 +386,7 @@ def lookup_words(x, vocab=None):
     return [str(t) for t in x]
 
 
-def print_examples(example_iter, model, n=2, max_len=100,
+def print_examples(example_iter, model, n=2, max_len=20,
                    sos_index=1,
                    src_eos_index=None,
                    trg_eos_index=None,
@@ -411,7 +414,6 @@ def print_examples(example_iter, model, n=2, max_len=100,
         # remove </s> (if it is there)
         src = src[:-1] if src[-1] == src_eos_index else src
         trg = trg[:-1] if trg[-1] == trg_eos_index else trg
-
         result, _ = greedy_decode(model,
                                   batch.src,
                                   batch.src_mask,
@@ -430,11 +432,11 @@ def print_examples(example_iter, model, n=2, max_len=100,
             break
 
 
-def train_copy_task():
+def train_toy_task(save_path=None):
     """Train the simple copy task."""
     num_words = 11
     criterion = nn.NLLLoss(reduction="sum", ignore_index=0)
-    model = make_model(num_words, num_words, emb_size=32, hidden_size=64)
+    model = make_model(num_words+1, num_words+1, emb_size=32, hidden_size=64)
     optim = torch.optim.Adam(model.parameters(), lr=0.0003)
     eval_data = list(data_gen(num_words=num_words, batch_size=1, num_batches=100))
 
@@ -450,22 +452,24 @@ def train_copy_task():
         # train
         model.train()
         data = data_gen(num_words=num_words, batch_size=32, num_batches=100)
-        run_epoch(data, model,
-                  SimpleLossCompute(model.generator, criterion, optim))
+        run_epoch(data, model, criterion, optim)
 
         # evaluate
         model.eval()
         with torch.no_grad():
-            perplexity = run_epoch(eval_data, model,
-                                   SimpleLossCompute(model.generator, criterion, None))
+            perplexity = run_epoch(eval_data, model, criterion, None)
             print("Evaluation perplexity: %f" % perplexity)
             dev_perplexities.append(perplexity)
-            print_examples(eval_data, model, n=2, max_len=9)
+            print_examples(eval_data, model, n=2)#, max_len=9)
+
+    if save_path is not None:
+        torch.save(model.state_dict(), save_path)
+        print("model saved")
 
     return dev_perplexities
 
 
-dev_perplexities = train_copy_task()
+dev_perplexities = train_toy_task("temp/seq2seq")
 
 
 def plot_perplexity(perplexities):
@@ -477,48 +481,8 @@ def plot_perplexity(perplexities):
     plt.show()
 
 
-plot_perplexity(dev_perplexities)
-# seq = pad_sequence([torch.tensor([1,2]),
-#                     torch.tensor([1]),
-#                     torch.tensor([1,2,3,4]),torch.tensor([1,2]),
-#                     torch.tensor([1]),
-#                     torch.tensor([1,2,3,4])], batch_first=True)
-# print("seq\n=====")
-# print(seq)
-# print(seq.size())
-# lens = [2,1,4, 2,1,4]
-
-# vocab_size=10
-# embedding_dim=64
-# emb = nn.Embedding(vocab_size, embedding_dim)
-# print(emb)
-# print(emb.weight.size())
-# print("emb\n=====")
-
-# embed = emb(seq)
-# print(embed)
-# print(embed.size())
-# print("embed\n=====")
 
 
-# packed = pack_padded_sequence(embed, lens, batch_first=True, enforce_sorted=False)
-# print(packed)
-# print(packed.data.size())
-# print("packed\n=====")
 
 
-# hidden_dim=128
-# rnn = nn.GRU(embedding_dim, hidden_dim, bidirectional=True)
-# encoded_hidden, encoded_final = rnn(packed)
-# print(encoded_hidden)
-# print(encoded_hidden.data.size())
-# print("encoded_hidden\n=====")
-# print(encoded_final)
-# print(encoded_final.data.size())
-# print("encoded_final\n=====")
-
-# output, _ = pad_packed_sequence(encoded_hidden, batch_first=True)
-# print(output)
-# print(output.data.size())
-# print("output\n=====")
 
