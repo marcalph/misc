@@ -54,21 +54,6 @@ print("Number of unique characters: ", len(characters))
 print("Characters present: ", characters)
 print("Longest captcha: ", max_length)
 
-# Batch size for training and validation
-batch_size = 16
-
-# Desired image dimensions
-img_width = 200
-img_height = 50
-
-# Factor by which the image is going to be downsampled
-# by the convolutional blocks. We will be using two
-# convolution blocks and each block will have
-# a pooling layer which downsample the features by a factor of 2.
-# Hence total downsampling factor would be 4.
-downsample_factor = 4
-
-
 
 # Test/train split 
 def split_data(images, labels, train_size=0.9, shuffle=False):
@@ -132,7 +117,6 @@ valid_ds = CaptchaDataset(x_valid, y_valid)
 valid_dataloader = DataLoader(valid_ds, batch_size=16)#, shuffle=True)
 
 
-
 # # visualize the data
 # _, ax = plt.subplots(4, 4, figsize=(10, 5))
 # for images, labels in train_dataloader:
@@ -146,151 +130,6 @@ valid_dataloader = DataLoader(valid_ds, batch_size=16)#, shuffle=True)
 #         ax[i // 4, i % 4].axis("off")
 #     break
 # plt.show()
-
-# vocabulary = ["-"] + characters
-# print(len(vocabulary))
-# print(vocabulary)
-# idx2char = {k: v for k, v in enumerate(vocabulary, start=0)}
-# print(idx2char)
-# char2idx = {v: k for k, v in idx2char.items()}
-# print(char2idx)
-
-
-# num_chars = len(char2idx)
-# print(num_chars)
-# rnn_hidden_size = 256
-
-# resnet = resnet18(pretrained=True)
-
-
-
-
-# class CRNN(nn.Module):
-#     def __init__(self, num_chars, rnn_hidden_size=256, dropout=0.1):
-#         super(CRNN, self).__init__()
-#         self.num_chars = num_chars
-#         self.rnn_hidden_size = rnn_hidden_size
-#         self.dropout = dropout
-
-#         # CNN Part 1
-#         resnet_modules = list(resnet.children())[:-3]
-#         self.cnn_p1 = nn.Sequential(*resnet_modules)
-
-#         # CNN Part 2
-#         self.cnn_p2 = nn.Sequential(
-#             nn.Conv2d(256, 256, kernel_size=(3,6), stride=1, padding=1),
-#             nn.BatchNorm2d(256),
-#             nn.ReLU(inplace=True)
-#         )
-#         self.linear1 = nn.Linear(1024, 256)
-#         # RNN
-#         self.rnn1 = nn.GRU(input_size=rnn_hidden_size, 
-#                             hidden_size=rnn_hidden_size,
-#                             bidirectional=True, 
-#                             batch_first=True)
-#         self.rnn2 = nn.GRU(input_size=rnn_hidden_size, 
-#                             hidden_size=rnn_hidden_size,
-#                             bidirectional=True, 
-#                             batch_first=True)
-#         self.linear2 = nn.Linear(self.rnn_hidden_size*2, num_chars)
-
-
-#     def forward(self, batch):
-#         print("start",batch.size()) 
-#         batch = self.cnn_p1(batch)
-#         print("cnn_part1",batch.size()) # torch.Size([-1, 256, 4, 13])
-#         batch = self.cnn_p2(batch) # [batch_size, channels, height, width]
-#         print("cnn_part2",batch.size())# torch.Size([-1, 256, 4, 10])
-#         batch = batch.permute(0, 3, 1, 2) # [batch_size, width, channels, height]
-#         print("permute to have BWCH",batch.size()) # torch.Size([-1, 10, 256, 4])
-
-#         batch_size = batch.size(0)
-#         T = batch.size(1)
-#         batch = batch.view(batch_size, T, -1) # [batch_size, T==width, num_features==channels*height]
-#         print("reshape", batch.size()) # torch.Size([-1, 10, 1024])
-#         batch = self.linear1(batch)
-#         print("projection", batch.size()) # torch.Size([-1, 10, 256])
-
-#         batch, hidden = self.rnn1(batch)
-#         feature_size = batch.size(2)
-#         print("rnn1",batch.size())
-#         batch = batch[:, :, :feature_size//2] + batch[:, :, feature_size//2:]
-#         print("sum", batch.size()) # torch.Size([-1, 10, 256])
-
-#         batch, hidden = self.rnn2(batch)
-#         print("rnn2", batch.size()) # torch.Size([-1, 10, 512])
-
-#         batch = self.linear2(batch)
-#         print("project", batch.size()) # torch.Size([-1, 10, 20])
-
-#         batch = batch.permute(1, 0, 2) # [T==10, batch_size, num_classes==num_features]
-#         print("permute to TBF",batch.size()) # torch.Size([10, -1, 20])
-#         return batch
-
-
-
-# def weights_init(m):
-#     classname = m.__class__.__name__
-#     if type(m) in [nn.Linear, nn.Conv2d, nn.Conv1d]:
-#         torch.nn.init.xavier_uniform_(m.weight)
-#         if m.bias is not None:
-#             m.bias.data.fill_(0.01)
-#     elif classname.find('BatchNorm') != -1:
-#         m.weight.data.normal_(1.0, 0.02)
-#         m.bias.data.fill_(0)
-
-# for image_batch, text_batch in train_dataloader:
-#     break
-
-# criterion = nn.CTCLoss(blank=0)
-
-# crnn = CRNN(20)
-# crnn.apply(weights_init)
-# crnn = crnn.to(device)
-
-# text_batch_logits = crnn(image_batch.to(device))
-# print("tb",text_batch)
-# print("tblogits",text_batch_logits.shape)
-
-
-# def encode_text_batch(text_batch):
-    
-#     text_batch_targets_lens = [len(text) for text in text_batch]
-#     text_batch_targets_lens = torch.IntTensor(text_batch_targets_lens)
-    
-#     text_batch_concat = "".join(text_batch)
-#     print("tb",text_batch)
-#     print("tbc",text_batch_concat)
-#     text_batch_targets = [char2idx[c] for c in text_batch_concat]
-#     text_batch_targets = torch.IntTensor(text_batch_targets)
-    
-#     return text_batch_targets, text_batch_targets_lens
-
-
-
-
-
-# def compute_loss(text_batch, text_batch_logits):
-#     """
-#     text_batch: list of strings of length equal to batch size
-#     text_batch_logits: Tensor of size([T, batch_size, num_classes])
-#     """
-#     text_batch_logps = F.log_softmax(text_batch_logits, 2) # [T, batch_size, num_classes]  
-#     text_batch_logps_lens = torch.full(size=(text_batch_logps.size(1),), 
-#                                        fill_value=text_batch_logps.size(0), 
-#                                        dtype=torch.int32).to(device) # [batch_size] 
-#     print("logits shape", text_batch_logps.shape)
-#     print("logits lens",text_batch_logps_lens) 
-#     text_batch_targets, text_batch_targets_lens = encode_text_batch(text_batch)
-#     print("target",text_batch_targets)
-#     print("target lens", text_batch_targets_lens)
-#     loss = criterion(text_batch_logps, text_batch_targets, text_batch_logps_lens, text_batch_targets_lens)
-#     print("hello")
-#     return loss
-
-# compute_loss(text_batch, text_batch_logits)
-
-
 
 class OCRNet(nn.Module):
     def __init__(self,):
@@ -307,6 +146,9 @@ class OCRNet(nn.Module):
             nn.Linear(768, 64),
             nn.Dropout(p=0.2)
         )
+        self.rnn1 = nn.GRU(64, 128, bidirectional=True, batch_first=True, dropout=0.25)
+        self.rnn2 = nn.GRU(256, 64, bidirectional=True, batch_first=True, dropout=0.25)
+        self.project = nn.Linear(128, len(characters)+1)
 
     def forward(self, x):
         # print("input batch", x.size())
@@ -318,11 +160,11 @@ class OCRNet(nn.Module):
         # print("reshape", x.size())
         x = self.projection(x)
         # print("project", x.size())
-        x, _ = nn.GRU(64, 128, bidirectional=True, batch_first=True, dropout=0.25)(x)
+        x, _ = self.rnn1(x)
         # print("rnn1", x.size())
-        x, _ = nn.GRU(256, 64, bidirectional=True, batch_first=True, dropout=0.25)(x)
+        x, _ = self.rnn2(x)
         # print("rnn2", x.size())
-        x = nn.Linear(128, len(characters)+1)(x)
+        x = self.project(x)
         # print("project", x.size())
         x = x.permute(1, 0, 2)
         # print("permute", x.size())
@@ -341,15 +183,6 @@ def weights_init(m):
         m.bias.data.fill_(0)
 
 
-for images, labels in train_dataloader:
-    break
-
-
-
-
-
-
-
 from tqdm import tqdm
 import torch.optim as optim
 
@@ -360,18 +193,17 @@ crit = nn.CTCLoss()
 opt = optim.Adam(model.parameters())
 
 
-
 epoch_losses = []
 iteration_losses = []
 num_updates_epochs = []
-for epoch in range(10):
+for epoch in range(50):
     epoch_loss_list = [] 
     num_updates_epoch = 0
     for input, target in train_dataloader:
         opt.zero_grad()
         input, target = input.to(device), target.to(device)
         output = model(input.float())
-        target = target.reshape(-1)
+        target = target.view(-1)
         output_lengths = torch.full(size=(input.size(0),), fill_value=output.size(0), dtype=torch.long)
         target_lengths = torch.full(size=(input.size(0),), fill_value=max_length, dtype=torch.long)
         loss = crit(output, target, output_lengths, target_lengths)
@@ -383,9 +215,19 @@ for epoch in range(10):
     epoch_loss = np.mean(epoch_loss_list)
     print("Epoch:{}    Loss:{}".format(epoch, epoch_loss))
     epoch_losses.append(epoch_loss)
-    
 
 
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
+
+ax1.plot(epoch_losses)
+ax1.set_xlabel("Epochs")
+ax1.set_ylabel("Loss")
+
+ax2.plot(iteration_losses)
+ax2.set_xlabel("Iterations")
+ax2.set_ylabel("Loss")
+
+plt.show()
 
 # output_lengths = torch.full(size=(batch_size,), fill_value=max_length, dtype=torch.long)
 # print("hello")
