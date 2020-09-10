@@ -1,49 +1,35 @@
+import multiprocessing as mp
 import os
-from collections import Counter
 from pathlib import Path
-import os
-import glob
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
 
+import cv2
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms
-from torchvision.models import resnet18
-
-import string
-from tqdm.notebook import tqdm
-import cv2
 from PIL import Image
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
-import multiprocessing as mp
-import cv2
-import matplotlib.pyplot as plt
-import numpy as np
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from PIL import Image
+from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
-
+from torchvision.models import resnet18
+from tqdm import tqdm
 
 
 global device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# Path to the data directory
+# data directory
 data_dir = Path("./data/captcha_images_v2/")
+
 
 # Get list of all the images
 images = sorted(list(map(str, list(data_dir.glob("*.png")))))
 labels = [img.split(os.path.sep)[-1].split(".png")[0] for img in images]
 characters = set(char for label in labels for char in label)
 characters = sorted(list(characters))
+
 
 # Maximum length of any captcha in the dataset
 max_length = max([len(label) for label in labels])
@@ -55,66 +41,49 @@ print("Characters present: ", characters)
 print("Longest captcha: ", max_length)
 
 
-# Test/train split 
-def split_data(images, labels, train_size=0.9, shuffle=False):
-    # 1. Get the total size of the dataset
-    size = len(images)
-    # 2. Make an indices array and shuffle it, if required
-    indices = np.arange(size)
-    if shuffle:
-        np.random.shuffle(indices)
-    # 3. Get the size of training samples
-    train_samples = int(size * train_size)
-    # 4. Split data into training and validation sets
-    x_train, y_train = images[indices[:train_samples]], labels[indices[:train_samples]]
-    x_valid, y_valid = images[indices[train_samples:]], labels[indices[train_samples:]]
-    return x_train, x_valid, y_train, y_valid
+# test/train split
+img_fns_train, img_fns_val = train_test_split(images, random_state=42)
 
-
-# Splitting data into training and validation sets
-x_train, x_valid, y_train, y_valid = split_data(np.array(images), np.array(labels))
-
-
-def char2int(char):
-    return "".join(characters).find(char)+1
-
+char2int = dict(zip(characters, range(1, len(characters)+1)))
+int2char = dict(zip(char2int.values(), char2int.keys()))
 
 class CaptchaDataset(Dataset):
-    def __init__(self, data, labels):
-        self.data = data
-        self.labels = labels
+    def __init__(self, image_fns):
+        self.image_fns = image_fns
 
     def __len__(self):
-        return len(self.data)
+        return len(self.image_fns)
 
     def __getitem__(self, idx):
         if torch.is_tensor(idx):
             idx = idx.tolist()
 
-        img_name = self.data[idx]
-        # image = cv2.imread(str(img_name))
-        # image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)/255
-        image = Image.open(img_name).convert('RGB')
+        img_name = self.image_fns[idx]
+        image = cv2.imread(str(img_name))
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)/255
         image = self.transform(image)
-        # if self.transform:
-        #     augmented = self.transform(image=image)
-        #     image = augmented['image']
-        label = torch.Tensor([char2int(c) for c in self.labels[idx]])
+        target = torch.Tensor([char2int[c] for c in self.image_fns[idx].split(os.path.sep)[-1].split(".png")[0]])
         # print(labels[idx])
-        return image, label
+        return image, target
 
     def transform(self, image):
         transform_ops = transforms.Compose([
-            transforms.ToTensor(),
-            # transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))
+            transforms.ToTensor()
             ])
         return transform_ops(image)
 
 
-train_ds = CaptchaDataset(x_train, y_train)
+train_ds = CaptchaDataset(img_fns_train)
 train_dataloader = DataLoader(train_ds, batch_size=16, shuffle=True)
-valid_ds = CaptchaDataset(x_valid, y_valid)
+valid_ds = CaptchaDataset(img_fns_val)
 valid_dataloader = DataLoader(valid_ds, batch_size=16)#, shuffle=True)
+
+
+for imgs, lbls in train_dataloader:
+    print(imgs.size())
+    print(len(lbls))
+    print(lbls)
+    break
 
 
 # # visualize the data
@@ -135,7 +104,7 @@ class OCRNet(nn.Module):
     def __init__(self,):
         super(OCRNet, self).__init__()
         self.conv_base = nn.Sequential(
-            nn.Conv2d(3, 32, 3, padding=1),
+            nn.Conv2d(1, 32, 3, padding=1),
             nn.ReLU(),
             nn.MaxPool2d(2, 2),
             nn.Conv2d(32, 64, 3, padding=1),
@@ -183,54 +152,73 @@ def weights_init(m):
         m.bias.data.fill_(0)
 
 
-from tqdm import tqdm
-import torch.optim as optim
-
 model = OCRNet()
 model.apply(weights_init)
 model = model.to(device)
 crit = nn.CTCLoss()
-opt = optim.Adam(model.parameters())
+opt = optim.AdamW(model.parameters())
 
 
-epoch_losses = []
-iteration_losses = []
-num_updates_epochs = []
-for epoch in range(50):
-    epoch_loss_list = [] 
-    num_updates_epoch = 0
-    for input, target in train_dataloader:
+def train(model, data, opt, crit):
+    model.train()
+    epoch_losses = []
+    for i, (inputs, targets) in enumerate(tqdm(data, leave=False)):
         opt.zero_grad()
-        input, target = input.to(device), target.to(device)
-        output = model(input.float())
-        target = target.view(-1)
-        output_lengths = torch.full(size=(input.size(0),), fill_value=output.size(0), dtype=torch.long)
-        target_lengths = torch.full(size=(input.size(0),), fill_value=max_length, dtype=torch.long)
-        loss = crit(output, target, output_lengths, target_lengths)
-        iteration_loss = loss.item()
-        iteration_losses.append(iteration_loss)
-        epoch_loss_list.append(iteration_loss)
+        inputs = inputs.to(device)
+        outputs = model(inputs.float())
+        targets = targets.view(-1)
+        outputs_lens = torch.full(size=(inputs.size(0),), fill_value=outputs.size(0), dtype=torch.long)
+        targets_lens = torch.full(size=(inputs.size(0),), fill_value=max_length, dtype=torch.long)
+        loss = crit(outputs, targets, outputs_lens, targets_lens)
+        epoch_losses.append(loss.item())
         loss.backward()
         opt.step()
-    epoch_loss = np.mean(epoch_loss_list)
-    print("Epoch:{}    Loss:{}".format(epoch, epoch_loss))
-    epoch_losses.append(epoch_loss)
+    trn_losses.append(np.mean(epoch_losses))
+
+
+def validate(model, data, opt, crit):
+    model.eval()
+    epoch_losses = []
+    with torch.no_grad():
+        for i, (inputs, targets) in enumerate(tqdm(data, leave=False)):
+            inputs = inputs.to(device)
+            outputs = model(inputs.float())
+            targets = targets.view(-1)
+            outputs_lens = torch.full(size=(inputs.size(0),), fill_value=outputs.size(0), dtype=torch.long)
+            targets_lens = torch.full(size=(inputs.size(0),), fill_value=max_length, dtype=torch.long)
+            loss = crit(outputs, targets, outputs_lens, targets_lens)
+            epoch_losses.append(loss.item())
+        val_losses.append(np.mean(epoch_losses))
+
+
+trn_losses = []
+val_losses = []
+for epoch in range(10):
+    train(model, train_dataloader, opt, crit)
+    validate(model, valid_dataloader, opt, crit)
+    print("epoch:{}     trn loss:{}      val loss:{}".format(epoch, trn_losses[-1], val_losses[-1]))
 
 
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
 
-ax1.plot(epoch_losses)
+ax1.plot(trn_losses)
 ax1.set_xlabel("Epochs")
 ax1.set_ylabel("Loss")
 
-ax2.plot(iteration_losses)
-ax2.set_xlabel("Iterations")
+ax2.plot(val_losses)
+ax2.set_xlabel("Epochs")
 ax2.set_ylabel("Loss")
 
 plt.show()
 
-# output_lengths = torch.full(size=(batch_size,), fill_value=max_length, dtype=torch.long)
-# print("hello")
-# print(output_lengths.size())
-# print(images.size())
-# print(labels.size())
+
+# def decode(outputs):
+#     outputs = outputs.argmax(2)  # [t, batch_size]
+#     outputs = outputs.numpy().T
+#     text_batch = []
+#     for output in outputs:
+#         text = "".join([int2char(i) for i in output])
+        
+
+
+
