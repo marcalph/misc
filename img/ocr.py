@@ -5,6 +5,7 @@ from pathlib import Path
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -16,7 +17,6 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 from torchvision.models import resnet18
 from tqdm import tqdm
-
 
 global device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -44,8 +44,9 @@ print("Longest captcha: ", max_length)
 # test/train split
 img_fns_train, img_fns_val = train_test_split(images, random_state=42)
 
-char2int = dict(zip(characters, range(1, len(characters)+1)))
+char2int = dict(zip(["-"]+characters, range(len(characters)+1)))
 int2char = dict(zip(char2int.values(), char2int.keys()))
+
 
 class CaptchaDataset(Dataset):
     def __init__(self, image_fns):
@@ -75,8 +76,8 @@ class CaptchaDataset(Dataset):
 
 train_ds = CaptchaDataset(img_fns_train)
 train_dataloader = DataLoader(train_ds, batch_size=16, shuffle=True)
-valid_ds = CaptchaDataset(img_fns_val)
-valid_dataloader = DataLoader(valid_ds, batch_size=16)#, shuffle=True)
+val_ds = CaptchaDataset(img_fns_val)
+val_dataloader = DataLoader(val_ds, batch_size=16)#, shuffle=True)
 
 
 for imgs, lbls in train_dataloader:
@@ -123,7 +124,7 @@ class OCRNet(nn.Module):
         # print("input batch", x.size())
         x = self.conv_base(x)
         # print("conv ouput", x.size())
-        x = x.permute(0,3,1,2)
+        x = x.permute(0, 3, 1, 2)
         # print("permute", x.size())
         x = x.reshape((x.size(0), 50, -1))
         # print("reshape", x.size())
@@ -193,9 +194,9 @@ def validate(model, data, opt, crit):
 
 trn_losses = []
 val_losses = []
-for epoch in range(10):
+for epoch in range(50):
     train(model, train_dataloader, opt, crit)
-    validate(model, valid_dataloader, opt, crit)
+    validate(model, val_dataloader, opt, crit)
     print("epoch:{}     trn loss:{}      val loss:{}".format(epoch, trn_losses[-1], val_losses[-1]))
 
 
@@ -212,13 +213,82 @@ ax2.set_ylabel("Loss")
 plt.show()
 
 
-# def decode(outputs):
-#     outputs = outputs.argmax(2)  # [t, batch_size]
-#     outputs = outputs.numpy().T
-#     text_batch = []
-#     for output in outputs:
-#         text = "".join([int2char(i) for i in output])
-        
+def decode(outputs):
+    outputs = outputs.argmax(2)  # [t, batch_size]
+    outputs = outputs.numpy().T
+    text_batch = []
+    for output in outputs:
+        text = "".join([int2char[i] for i in output])
+        text_batch.append(text)
+
+    return text_batch
+
+
+results_train = pd.DataFrame(columns=['actual', 'prediction'])
+with torch.no_grad():
+    for image_batch, text_batch in tqdm(train_dataloader, leave=True):
+        outputs = model(image_batch.float().to(device)) # [T, batch_size, num_classes==num_features]
+        text_batch_pred = decode(outputs.cpu())
+        #print(text_batch, text_batch_pred)
+        df = pd.DataFrame(columns=['actual', 'prediction'])
+        df['actual'] = text_batch
+        df['prediction'] = text_batch_pred
+        results_train = pd.concat([results_train, df])
+results_train = results_train.reset_index(drop=True)
+
+
+results_test = pd.DataFrame(columns=['actual', 'prediction'])
+with torch.no_grad():
+    for image_batch, text_batch in tqdm(val_dataloader, leave=True):
+        outputs = model(image_batch.float().to(device)) # [T, batch_size, num_classes==num_features]
+        text_batch_pred = decode(outputs.cpu())
+        #print(text_batch, text_batch_pred)
+        df = pd.DataFrame(columns=['actual', 'prediction'])
+        df['actual'] = text_batch
+        df['prediction'] = text_batch_pred
+        results_test = pd.concat([results_test, df])
+results_test = results_test.reset_index(drop=True)
+
+
+print(results_train.shape)
+print(results_train.head())
+print(results_test.shape)
+print(results_test.head())
 
 
 
+def remove_duplicates(text):
+    if len(text) > 1:
+        letters = [text[0]] + [letter for idx, letter in enumerate(text[1:], start=1) if text[idx] != text[idx-1]]
+    elif len(text) == 1:
+        letters = [text[0]]
+    else:
+        return ""
+    return "".join(letters)
+
+def correct_prediction(word):
+    parts = word.split("-")
+    parts = [remove_duplicates(part) for part in parts]
+    corrected_word = "".join(parts)
+    return corrected_word
+results_train['prediction_corrected'] = results_train['prediction'].apply(correct_prediction)
+results_train.head()
+results_test['prediction_corrected'] = results_test['prediction'].apply(correct_prediction)
+results_test.head()
+
+
+
+mistakes_df = results_test[results_test['actual'] != results_test['prediction_corrected']]
+print(mistakes_df.head())
+print(mistakes_df['prediction_corrected'].str.len().value_counts())
+mask = mistakes_df['prediction_corrected'].str.len() == 5
+print(mistakes_df[mask])
+mistake_image_fp = os.path.join(data_dir, mistakes_df[mask]['actual'].values[0] + ".png")
+print(mistake_image_fp)
+mistake_image = Image.open(mistake_image_fp)
+plt.imshow(mistake_image)
+plt.show()
+train_accuracy = accuracy_score(results_train['actual'], results_train['prediction_corrected'])
+print(train_accuracy)
+test_accuracy = accuracy_score(results_test['actual'], results_test['prediction_corrected'])
+print(test_accuracy)
