@@ -1,5 +1,5 @@
 downloads/
-data/
+**/*data/
 donotcommit.py
 temp/
-**/test*.py
+**/*test*.py

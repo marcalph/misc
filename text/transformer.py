@@ -22,7 +22,7 @@ class TransformerModel(nn.Module):
 
     def _generate_square_subsequent_mask(self, sz):
         # mask i.e boolean lower triangular matrix of size sz
-        mask = (torch.triu(torch.ones(sz, sz) == 1).transpose(0, 1)
+        mask = torch.triu(torch.ones(sz, sz) == 1).transpose(0, 1)
         # replace {0:-inf, 1:0}
         mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
         return mask
@@ -67,3 +67,25 @@ class PositionalEncoding(nn.Module):
     def forward(self, x):
         x = x + self.pe[:x.size(0), :]
         return self.dropout(x)
+
+import torchtext
+from torchtext.data.utils import get_tokenizer
+TEXT = torchtext.data.Field(tokenize=get_tokenizer("basic_english"),
+                            init_token='<sos>',
+                            eos_token='<eos>',
+                            lower=True)
+train_txt, val_txt, test_txt = torchtext.datasets.WikiText2.splits(TEXT)
+TEXT.build_vocab(train_txt)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+print(train_txt)
+print(TEXT)
+def batchify(data, bsz):
+    data = TEXT.numericalize([data.examples[0].text])
+    # Divide the dataset into bsz parts.
+    nbatch = data.size(0) // bsz
+    # Trim off any extra elements that wouldn't cleanly fit (remainders).
+    data = data.narrow(0, 0, nbatch * bsz)
+    # Evenly divide the data across the bsz batches.
+    data = data.view(bsz, -1).t().contiguous()
+    return data.to(device)

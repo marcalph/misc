@@ -23,16 +23,36 @@ start_time = time.time()
 a,b = 5,10
 c = a+b
 end_time = time.time()
-time_taken = (end_time- start_time)
+time_taken = (end_time - start_time)
 print("Time taken:", time_taken)
 print("**********")
 
 
 """ map
 """
+# import logging
+# logger = logging.getLogger()
+# logger.setLevel(logging.DEBUG)
+# ch = logging.StreamHandler()
+# formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s \n %(message)s", "%Y-%m-%d %H:%M")
+# ch.setFormatter(formatter)
+# logger.addHandler(ch)
+
 print("map function", end="\n************\n")
+from decorators import logthis
+import logging
+logger = logging.getLogger('snippets')
+logger.setLevel(logging.DEBUG)
+ch = logging.StreamHandler()
+formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s \n %(message)s", "%Y-%m-%d %H:%M")
+ch.setFormatter(formatter)
+logger.addHandler(ch)
+
+
+@logthis
 def square(n):
     return n * n
+
 
 obj = (1, 2, 3)
 result = map(square, obj)
