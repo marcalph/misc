@@ -3,3 +3,4 @@ downloads/
 donotcommit.py
 temp/
 **/*test*.py
+**/__pycache__

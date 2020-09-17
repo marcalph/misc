@@ -9,7 +9,7 @@ import functools
 # ch.setFormatter(formatter)
 # logger.addHandler(ch)
 
-# classmethod 
+# classmethod
 # transforme la méthode en méthode de classe - pas besoin d’instance pour éxécuter la méthode, le premier paramètre est la classe elle même
 # pour le code commun à toutes les instances et celles des classes enfants.
 
@@ -59,6 +59,7 @@ def decoratorf(number):
 def test(string):
     print(string)
 
+
 @logthis
 def test2(string):
     print(string)
@@ -68,4 +69,3 @@ if __name__ == "__main__":
     decoratorf(7)
     test("string")
     test2("hellow")
-    
