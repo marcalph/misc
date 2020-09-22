@@ -43,6 +43,7 @@ class TransformerModel(nn.Module):
             mask = self._generate_square_subsequent_mask(len(src)).to(device)
             self.src_mask = mask
         # embed src seq
+        # make embedding larger to conserve meaning >> positionnal info
         src = self.encoder(src) * math.sqrt(self.ninp)
         # pos encode
         src = self.pos_encoder(src)
@@ -190,3 +191,6 @@ print('=' * 89)
 print('| End of training | test loss {:5.2f} | test ppl {:8.2f}'.format(
     test_loss, math.exp(test_loss)))
 print('=' * 89)
+
+
+torch.save(model.state_dict(), "./models/simple_transformer.pth")

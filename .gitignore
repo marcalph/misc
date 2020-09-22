@@ -4,3 +4,4 @@ donotcommit.py
 temp/
 **/*test*.py
 **/__pycache__
+**/models
