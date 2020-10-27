@@ -130,8 +130,7 @@ class OCRNet(nn.Module):
         # print("reshape", x.size())
         x = self.projection(x)
         # print("project", x.size())
-        x, _ = self.rnn1(x)
-        # print("rnn1", x.size())
+        x, _ = self.rnn1(x) 
         x, _ = self.rnn2(x)
         # print("rnn2", x.size())
         x = self.project(x)
@@ -191,104 +190,141 @@ def validate(model, data, opt, crit):
             epoch_losses.append(loss.item())
         val_losses.append(np.mean(epoch_losses))
 
-
-trn_losses = []
-val_losses = []
-for epoch in range(50):
-    train(model, train_dataloader, opt, crit)
-    validate(model, val_dataloader, opt, crit)
-    print("epoch:{}     trn loss:{}      val loss:{}".format(epoch, trn_losses[-1], val_losses[-1]))
-
-
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
-
-ax1.plot(trn_losses)
-ax1.set_xlabel("Epochs")
-ax1.set_ylabel("Loss")
-
-ax2.plot(val_losses)
-ax2.set_xlabel("Epochs")
-ax2.set_ylabel("Loss")
-
-plt.show()
+from torch.utils.tensorboard import SummaryWriter
+writer = SummaryWriter('runs/ocr_1')
+# get some random training images
+dataiter = iter(train_dataloader)
+images, labels = dataiter.next()
+import torchvision
 
 
-def decode(outputs):
-    outputs = outputs.argmax(2)  # [t, batch_size]
-    outputs = outputs.numpy().T
-    text_batch = []
-    for output in outputs:
-        text = "".join([int2char[i] for i in output])
-        text_batch.append(text)
-
-    return text_batch
-
-
-results_train = pd.DataFrame(columns=['actual', 'prediction'])
-with torch.no_grad():
-    for image_batch, text_batch in tqdm(train_dataloader, leave=True):
-        outputs = model(image_batch.float().to(device)) # [T, batch_size, num_classes==num_features]
-        text_batch_pred = decode(outputs.cpu())
-        #print(text_batch, text_batch_pred)
-        df = pd.DataFrame(columns=['actual', 'prediction'])
-        df['actual'] = text_batch
-        df['prediction'] = text_batch_pred
-        results_train = pd.concat([results_train, df])
-results_train = results_train.reset_index(drop=True)
-
-
-results_test = pd.DataFrame(columns=['actual', 'prediction'])
-with torch.no_grad():
-    for image_batch, text_batch in tqdm(val_dataloader, leave=True):
-        outputs = model(image_batch.float().to(device)) # [T, batch_size, num_classes==num_features]
-        text_batch_pred = decode(outputs.cpu())
-        #print(text_batch, text_batch_pred)
-        df = pd.DataFrame(columns=['actual', 'prediction'])
-        df['actual'] = text_batch
-        df['prediction'] = text_batch_pred
-        results_test = pd.concat([results_test, df])
-results_test = results_test.reset_index(drop=True)
-
-
-print(results_train.shape)
-print(results_train.head())
-print(results_test.shape)
-print(results_test.head())
-
-
-
-def remove_duplicates(text):
-    if len(text) > 1:
-        letters = [text[0]] + [letter for idx, letter in enumerate(text[1:], start=1) if text[idx] != text[idx-1]]
-    elif len(text) == 1:
-        letters = [text[0]]
+def matplotlib_imshow(img, one_channel=False):
+    if one_channel:
+        img = img.mean(dim=0)
+    img = img / 2 + 0.5     # unnormalize
+    npimg = img.numpy()
+    if one_channel:
+        plt.imshow(npimg, cmap="Greys")
     else:
-        return ""
-    return "".join(letters)
-
-def correct_prediction(word):
-    parts = word.split("-")
-    parts = [remove_duplicates(part) for part in parts]
-    corrected_word = "".join(parts)
-    return corrected_word
-results_train['prediction_corrected'] = results_train['prediction'].apply(correct_prediction)
-results_train.head()
-results_test['prediction_corrected'] = results_test['prediction'].apply(correct_prediction)
-results_test.head()
+        plt.imshow(np.transpose(npimg, (1, 2, 0)))
 
 
+# create grid of images
+img_grid = torchvision.utils.make_grid(images)
 
-mistakes_df = results_test[results_test['actual'] != results_test['prediction_corrected']]
-print(mistakes_df.head())
-print(mistakes_df['prediction_corrected'].str.len().value_counts())
-mask = mistakes_df['prediction_corrected'].str.len() == 5
-print(mistakes_df[mask])
-mistake_image_fp = os.path.join(data_dir, mistakes_df[mask]['actual'].values[0] + ".png")
-print(mistake_image_fp)
-mistake_image = Image.open(mistake_image_fp)
-plt.imshow(mistake_image)
-plt.show()
-train_accuracy = accuracy_score(results_train['actual'], results_train['prediction_corrected'])
-print(train_accuracy)
-test_accuracy = accuracy_score(results_test['actual'], results_test['prediction_corrected'])
-print(test_accuracy)
+# show images
+matplotlib_imshow(img_grid, one_channel=True)
+
+# write to tensorboard
+writer.add_image('four_fashion_mnist_images', img_grid)
+
+
+# trn_losses = []
+# val_losses = []
+# for epoch in range(10):
+#     train(model, train_dataloader, opt, crit)
+#     validate(model, val_dataloader, opt, crit)
+#     print("epoch:{}     trn loss:{}      val loss:{}".format(epoch, trn_losses[-1], val_losses[-1]))
+
+
+
+
+
+# fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
+
+# ax1.plot(trn_losses)
+# ax1.set_xlabel("Epochs")
+# ax1.set_ylabel("Loss")
+
+# ax2.plot(val_losses)
+# ax2.set_xlabel("Epochs")
+# ax2.set_ylabel("Loss")
+
+# plt.show()
+
+
+# def decode(outputs):
+#     """ decode predictions with greedy startegy
+#     """
+#     outputs = outputs.argmax(2)  # [t, batch_size]
+#     outputs = outputs.numpy().T
+#     text_batch = []
+#     for output in outputs:
+#         text = "".join([int2char[i] for i in output])
+#         text_batch.append(text)
+
+#     return text_batch
+
+
+# results_train = pd.DataFrame(columns=['actual', 'prediction'])
+# with torch.no_grad():
+#     for image_batch, text_batch in tqdm(train_dataloader, leave=True):
+#         outputs = model(image_batch.float().to(device)) # [T, batch_size, num_classes==num_features]
+#         text_batch_pred = decode(outputs.cpu())
+#         #print(text_batch, text_batch_pred)
+#         df = pd.DataFrame(columns=['actual', 'prediction'])
+#         df['actual'] = text_batch
+#         df['prediction'] = text_batch_pred
+#         results_train = pd.concat([results_train, df])
+# results_train = results_train.reset_index(drop=True)
+
+
+# results_test = pd.DataFrame(columns=['actual', 'prediction'])
+# with torch.no_grad():
+#     for image_batch, text_batch in tqdm(val_dataloader, leave=True):
+#         outputs = model(image_batch.float().to(device)) # [T, batch_size, num_classes==num_features]
+#         text_batch_pred = decode(outputs.cpu())
+#         #print(text_batch, text_batch_pred)
+#         df = pd.DataFrame(columns=['actual', 'prediction'])
+#         df['actual'] = text_batch
+#         df['test'] = df.actual.apply(lambda x: [int2char[xi.item()] for xi in x])
+#         df['prediction'] = text_batch_pred
+#         results_test = pd.concat([results_test, df])
+# results_test = results_test.reset_index(drop=True)
+
+
+# print(results_train.shape)
+# print(results_train.head())
+# print(results_test.shape)
+# print(results_test.head())
+
+
+
+# def remove_duplicates(text):
+#     if len(text) > 1:
+#         letters = [text[0]] + [letter for idx, letter in enumerate(text[1:], start=1) if text[idx] != text[idx-1]]
+#     elif len(text) == 1:
+#         letters = [text[0]]
+#     else:
+#         return ""
+#     return "".join(letters)
+
+
+# def correct_prediction(word):
+#     parts = word.split("-")
+#     parts = [remove_duplicates(part) for part in parts]
+#     corrected_word = "".join(parts)
+#     return corrected_word
+
+
+# results_train['prediction_corrected'] = results_train['prediction'].apply(correct_prediction)
+# results_train.head()
+# results_test['prediction_corrected'] = results_test['prediction'].apply(correct_prediction)
+# results_test.sample(10).head()
+
+
+
+# mistakes_df = results_test[results_test['actual'] != results_test['prediction_corrected']]
+# print(mistakes_df.head())
+# print(mistakes_df['prediction_corrected'].str.len().value_counts())
+# mask = mistakes_df['prediction_corrected'].str.len() == 5
+# print(mistakes_df[mask])
+# mistake_image_fp = os.path.join(data_dir, mistakes_df[mask]['actual'].values[0] + ".png")
+# print(mistake_image_fp)
+# mistake_image = Image.open(mistake_image_fp)
+# plt.imshow(mistake_image)
+# plt.show()
+# train_accuracy = accuracy_score(results_train['actual'], results_train['prediction_corrected'])
+# print(train_accuracy)
+# test_accuracy = accuracy_score(results_test['actual'], results_test['prediction_corrected'])
+# print(test_accuracy)

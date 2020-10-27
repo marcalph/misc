@@ -189,7 +189,14 @@ val_dataloader = DataLoader(val_ds, batch_size=64,
 
 dataloaders_dict = {"train": train_dataloader, "val": val_dataloader}
 
+for imgs, lbls in train_dataloader:
+    print(imgs.size())
+    print(len(lbls))
+    print(lbls)
+    print("====")
+    break
 
+raise Exception
 
 
 class LRFinder():

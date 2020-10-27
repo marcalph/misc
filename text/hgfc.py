@@ -61,11 +61,23 @@ model = AutoModelWithLMHead.from_pretrained("gpt2")
 sequence = f"Hugging Face is based in DUMBO, New York City, and "
 input_ids = tokenizer.encode(sequence, return_tensors="pt")
 # get logits of last hidden state
-next_token_logits = model(input_ids).logits[:, -1, :]
+next_token_logits = model(input_ids)[0][:, -1, :]
+first_token_logits = model(input_ids)[0][:,0,:]
 # filter
+
 filtered_next_token_logits = top_k_top_p_filtering(next_token_logits, top_k=50, top_p=1.0)
+filtered_first_token_logits = top_k_top_p_filtering(first_token_logits, top_k=50, top_p=1.0)
+
 # sample
 probs = F.softmax(filtered_next_token_logits, dim=-1)
 next_token = torch.multinomial(probs, num_samples=1)
+tokenizer.decode(next_token)
+
+
+first_probs = F.softmax(filtered_first_token_logits, dim=-1)
+first_token = torch.multinomial(first_probs, num_samples=1)
+tokenizer.decode(first_token)
+
+
 generated = torch.cat([input_ids, next_token], dim=-1)
 resulting_string = tokenizer.decode(generated.tolist()[0])

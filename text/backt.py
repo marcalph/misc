@@ -30,5 +30,13 @@ def back_translate(texts, source_lang="fr", target_lang="en"):
     return back_translated_texts
 
 
-en_texts = ["ce n'est pas vraiement de l'anglais mais bon tant pis", "ah sinon oui j'ai faim"]
-aug_texts = back_translate(en_texts, source_lang="fr", target_lang="en")
+texts = ["Je parle mal la france parce que je suis limité", "J'aurais besoin d'une attestation RC pour ma fille Léa", "je voudrais savoir où en est le remboursement de ma salle de bains"]
+aug_texts = back_translate(texts, source_lang="fr", target_lang="en")
+
+
+
+for i, t in enumerate(texts):
+    print(t)
+    print(aug_texts[i])
+    print("="*20)
+
