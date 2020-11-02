@@ -5,3 +5,4 @@ temp/
 **/*test*.py
 **/__pycache__
 **/models
+**/runs

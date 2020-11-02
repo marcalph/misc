@@ -198,25 +198,35 @@ images, labels = dataiter.next()
 import torchvision
 
 
-def matplotlib_imshow(img, one_channel=False):
-    if one_channel:
-        img = img.mean(dim=0)
-    img = img / 2 + 0.5     # unnormalize
-    npimg = img.numpy()
-    if one_channel:
-        plt.imshow(npimg, cmap="Greys")
-    else:
-        plt.imshow(np.transpose(npimg, (1, 2, 0)))
+# def matplotlib_imshow(img, one_channel=False):
+#     if one_channel:
+#         img = img.mean(dim=0)
+#     img = img / 2 + 0.5     # unnormalize
+#     npimg = img.numpy()
+#     if one_channel:
+#         plt.imshow(npimg, cmap="Greys")
+#     else:
+#         plt.imshow(np.transpose(npimg, (1, 2, 0)))
 
 
-# create grid of images
-img_grid = torchvision.utils.make_grid(images)
+# # create grid of images
+# img_grid = torchvision.utils.make_grid(images)
 
-# show images
-matplotlib_imshow(img_grid, one_channel=True)
+# # show images
+# matplotlib_imshow(img_grid, one_channel=True)
 
-# write to tensorboard
-writer.add_image('four_fashion_mnist_images', img_grid)
+# # write to tensorboard
+# writer.add_image('four_fashion_mnist_images', img_grid)
+
+
+
+
+
+
+
+
+
+
 
 
 # trn_losses = []
