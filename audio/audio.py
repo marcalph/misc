@@ -12,8 +12,10 @@ with open('data/test.wav', 'wb') as f:
 filename = "data/test.wav"
 waveform, sample_rate = torchaudio.load(filename)
 
+waveform.shape
 print("Shape of waveform: {}".format(waveform.size()))
 print("Sample rate of waveform: {}".format(sample_rate))
 
 plt.figure()
 plt.plot(waveform.t().numpy())
+plt.show()

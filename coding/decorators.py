@@ -1,6 +1,8 @@
 import time
 import logging
 import functools
+import os
+from inspect import getframeinfo, stack
 
 # logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
@@ -25,15 +27,17 @@ import functools
 class CustomFormatter(logging.Formatter):
     """Custom formatter, overrides funcName with value of name_override if it exists"""
     def format(self, record):
-        if hasattr(record, 'name_override'):
-            record.name = record.name_override
+        if hasattr(record, 'funcname_override'):
+            record.funcname = record.funcname_override
+        if hasattr(record, 'filename_override'):
+            record.filename = record.filename_override
         return super(CustomFormatter, self).format(record)
 
 
 logger = logging.getLogger(__file__)
 logger.setLevel(logging.DEBUG)
 ch = logging.StreamHandler()
-formatter = CustomFormatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s", "%Y-%m-%d %H:%M")
+formatter = CustomFormatter("%(asctime)s - %(levelname)s - %(funcname)s@%(filename)s - %(message)s", "%Y-%m-%d %H:%M")
 ch.setFormatter(formatter)
 logger.addHandler(ch)
 
@@ -41,10 +45,13 @@ logger.addHandler(ch)
 def logthis(fn):
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
-        logger.info(f"started", extra={'name_override': fn.__name__})
+        py_file_caller = getframeinfo(stack()[1][0])
+        extra_args = { 'funcname_override': fn.__name__,
+                           'filename_override': os.path.basename(py_file_caller.filename) }
+        logger.info(f"started", extra=extra_args)
         t = time.time()
         function = fn(*args, **kwargs)
-        logger.info(f"ended ran in {time.time()-t:.3f} seconds", extra={'name_override': fn.__name__})
+        logger.info(f"ended in {time.time()-t:.1f} sec", extra=extra_args)
         return function
     return wrapper
 
