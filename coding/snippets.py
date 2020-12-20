@@ -30,16 +30,9 @@ print("**********")
 
 """ map
 """
-# import logging
-# logger = logging.getLogger()
-# logger.setLevel(logging.DEBUG)
-# ch = logging.StreamHandler()
-# formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s \n %(message)s", "%Y-%m-%d %H:%M")
-# ch.setFormatter(formatter)
-# logger.addHandler(ch)
 
 print("map function", end="\n************\n")
-from decorators import logthis
+from log import logthis
 import logging
 logger = logging.getLogger('snippets')
 logger.setLevel(logging.DEBUG)
